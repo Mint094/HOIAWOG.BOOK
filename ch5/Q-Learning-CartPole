@@ -1,0 +1,121 @@
+#!/usr/bin/env/ python
+"""
+q_learner.py
+An easy-to-follow script to train, test and evaluate a Q-learning agent on the Mountain Car
+problem using the OpenAI Gym. |Praveen Palanisamy
+# Chapter 5, Hands-on Intelligent Agents with OpenAI Gym, 2018
+"""
+# import gymnasium as gym
+import gym
+import numpy as np
+
+
+MAX_NUM_EPISODES = 50000
+STEPS_PER_EPISODE = 200 #  This is specific to MountainCar. May change with env
+EPSILON_MIN = 0.005
+max_num_steps = MAX_NUM_EPISODES * STEPS_PER_EPISODE
+EPSILON_DECAY = 500 * EPSILON_MIN / max_num_steps
+ALPHA = 0.05  # Learning rate
+GAMMA = 0.98  # Discount factor
+NUM_DISCRETE_BINS = 30  # Number of bins to Discretize each observation dim
+
+
+class Q_Learner(object):
+    def __init__(self, env):
+        self.action_space = env.action_space
+        self.obs_shape = env.observation_space.shape
+        self.obs_high = env.observation_space.high
+        self.obs_low = env.observation_space.low
+        self.obs_bins = NUM_DISCRETE_BINS  # Number of bins to Discretize each observation dim
+        self.bin_width = (self.obs_high - self.obs_low) / self.obs_bins
+        self.action_shape = env.action_space.n
+        # Create a multi-dimensional array (aka. Table) to represent the
+        # Q-values
+        self.Q = np.zeros((self.obs_bins + 1, self.obs_bins + 1,
+                           self.action_shape))  # (51 x 51 x 3)
+        self.alpha = ALPHA  # Learning rate
+        self.gamma = GAMMA  # Discount factor
+        self.epsilon = 1.0
+
+    def discretize(self, obs): #离散化，将连续的观察值离散化
+        return tuple(((obs - self.obs_low) / self.bin_width).astype(int)) #将给定的观察值‘obs’映射到对应的离散化区间索引，并返回一个元组
+
+    def get_action(self, obs): #epsilon-greedy策略选择动作
+        discretized_obs = self.discretize(obs) #将观察值离散化。这一行将连续的观察值 obs 离散化为一个元组 discretized_obs。discretize 函数的作用是将连续的观察空间映射到离散的状态空间。
+        # Epsilon-Greedy action selection
+        if self.epsilon > EPSILON_MIN:
+            self.epsilon -= EPSILON_DECAY #新的epsilon=旧epsilon-epsilon_decay 姆骑士在训练过程中逐渐降低探索率，是智能体更加倾向于选择已经学到的最优动作
+        if np.random.random() > self.epsilon: #随机大于epsilon
+            return np.argmax(self.Q[discretized_obs[0]]) #有1-epsilon的概率学习到最优动作（当前状态喜爱Q值最大的动作
+        else:  # Choose a random action
+           #return np.random.choice([a for a in range(self.action_shape)]) #epsilon的概率随机动作
+            return np.random.choice(range(self.action_shape))
+
+    def learn(self, obs, action, reward, next_obs):  #用于更新Q表
+        # 打印调试信息
+       # print("Action space:", self.action_space)
+       # print("Action:", action)
+        #action = int(action)
+        assert self.action_space.contains(action), "%r (%s) invalid" % (action, type(action)) #检查选择的动作是否在动作空间中
+        action = int(action) #将动作转化成整数
+        discretized_obs = self.discretize(obs) #将目前的观察值离散化成对应索引，获得四维状态空间
+        discretized_next_obs = self.discretize(next_obs) #将下一个观察值离散化成xxxxxxx（与上相似）
+
+        td_target = reward + self.gamma * np.max(self.Q[discretized_next_obs[0]])  #计算TD目标
+        td_error = td_target - self.Q[discretized_obs[0]][action]  #计算TD误差
+        self.Q[discretized_obs[0]][action] += self.alpha * td_error  #更新Q表中的值
+
+def train(agent, env):  #训练Q-Learning智能体，智能体通过不断尝试并更新 Q 值来学习最佳策略
+    best_reward = -float('inf') #初始化“best_reward”为整数负无穷
+    for episode in range(MAX_NUM_EPISODES):  #进行循环，在每个 episode 中，智能体根据当前观察 obs 选择动作
+        done = False  #结束就停止，不结束就继续循环
+        obs = env.reset() #初始化观察值
+        total_reward = 0.0  # 在每个 episode 开始时重置 total_reward
+        i =0
+        while not done:
+            action = agent.get_action(obs) #对于当前观察的obs通过agent里面的get_action函数进行动作的获取
+            action = np.clip(action, 0, agent.action_shape - 1)  #由于动作可能超出动作空间的范围，使用 np.clip 将其限制在合理范围内。在[0, agent.action_shape - 1] 这个区间内选择动作
+            next_obs, reward, done, info = env.step(action)  #执行动作得到下一个观察值的四个部分
+            agent.learn(obs, action, reward, next_obs)  #智能体根据以上信息更新Q值表
+            #print(agent.learn())
+            obs = next_obs[0]  #更新 obs 为 next_obs，并累加 total_reward。
+            total_reward += reward
+            if (bool(i<200 and done==True)):
+                print("succeeded",i)
+        if total_reward > best_reward:  #如果当前 episode 的总奖励 total_reward 大于历史最佳奖励 best_reward，更新 best_reward 为 total_reward。
+            best_reward = total_reward
+        print("Episode#:{} reward:{} best_reward:{} eps:{}".format(episode,
+                                     total_reward, best_reward, agent.epsilon))
+    # Return the trained policy
+    return np.argmax(agent.Q, axis=2)  #最后，该函数返回训练好的策略，即 Q 表格中每个状态的最佳动作索引。
+
+
+def mytest(agent, env, policy): #可以评估训练后的策略在环境中的表现
+    done = False
+    obs = env.reset()
+    total_reward = 0.0
+    i = 1000
+    while not done:  #在每个 step 中，根据当前观察 obs 使用策略 policy 选择动作。
+        #discretized_obs = agent.discretize(obs)
+        #print("Discretized Obs:", discretized_obs)
+        action = policy[agent.discretize(obs)[0],agent.discretize(obs)[2]]  #使用智能体的 discretize 方法将连续的观察转换为离散值，得到离散的状态索引。从策略 policy 中选择当前状态对应的最佳动作。
+        next_obs, reward, done, info = env.step(action)  #执行动作 (env.step(action))，得到下一个观察 next_obs，奖励 reward，以及是否结束 done。
+        obs = next_obs  #更新 obs 为 next_obs，并累加 total_reward。
+        total_reward += reward
+        # i = i-1
+    print(total_reward)
+    return total_reward
+
+
+if __name__ == "__main__":
+    env = gym.make('CartPole-v0')
+    agent = Q_Learner(env)
+    learned_policy = train(agent, env)
+    # Use the Gym Monitor wrapper to evalaute the agent and record video
+    gym_monitor_path = "./gym_monitor_output"
+    env = gym.wrappers.Monitor(env, gym_monitor_path, force=True)
+    for _ in range(5):
+        env.render()
+        mytest(agent, env, learned_policy)
+    env.close()
+
